@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>영어 회화 연습</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>영어 회화 연습</h1>
+  </header>
+
+  <main>
+    <!-- 1. 시나리오 선택 화면 -->
+    <section id="screen-scenario" class="screen">
+      <div class="settings-box">
+        <label for="api-key-input">Gemini API 키</label>
+        <div class="settings-row">
+          <input id="api-key-input" type="password" placeholder="AIzaSy...">
+          <button id="btn-save-key" type="button" class="btn">저장</button>
+        </div>
+        <div id="api-key-status" class="api-key-status"></div>
+      </div>
+
+      <h2>무엇을 연습할까요?</h2>
+      <div id="scenario-list" class="scenario-list"></div>
+    </section>
+
+    <!-- 2. 대화 화면 -->
+    <section id="screen-conversation" class="screen hidden">
+      <h2 id="conversation-title">대화</h2>
+      <div id="chat-log" class="chat-log"></div>
+
+      <div class="controls">
+        <div class="lang-toggle" id="lang-toggle">
+          <button type="button" class="lang-btn active" data-lang="ko-KR">한국어로 말하기</button>
+          <button type="button" class="lang-btn" data-lang="en-US">영어로 말하기</button>
+        </div>
+        <button id="btn-mic" class="btn btn-mic">🎤 말하기</button>
+        <div id="mic-status" class="mic-status"></div>
+        <form id="form-text-input" class="text-input-row">
+          <input id="input-text" type="text" placeholder="또는 텍스트로 입력" autocomplete="off">
+          <button type="submit" class="btn">전송</button>
+        </form>
+        <button id="btn-end" class="btn btn-end">대화 종료</button>
+      </div>
+    </section>
+
+    <!-- 3. 피드백 화면 -->
+    <section id="screen-feedback" class="screen hidden">
+      <h2>피드백</h2>
+      <div id="feedback-list" class="feedback-list"></div>
+      <button id="btn-restart" class="btn">다시 시작</button>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
