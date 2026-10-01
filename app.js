@@ -458,7 +458,10 @@ async function callGemini(scenario, turns) {
       role: m.speaker === "user" ? "user" : "model",
       parts: [{ text: m.text }],
     })),
-    generationConfig: { maxOutputTokens: 300, responseMimeType: "application/json" },
+    // gemini-3.8-flash는 기본적으로 내부 "thinking" 토큰도 maxOutputTokens 안에서 쓴다.
+    // 너무 낮게 잡으면(예전 300) 눈에 보이는 JSON을 쓰기도 전에 한도를 넘겨서
+    // {"translation": 처럼 잘린 응답이 온다 — 그래서 여유 있게 잡는다.
+    generationConfig: { maxOutputTokens: 1024, responseMimeType: "application/json" },
   });
 
   const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
@@ -469,7 +472,14 @@ async function callGemini(scenario, turns) {
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    // JSON 모드인데도 깨진 형식이 오면, 대화가 끊기지 않도록 평문 그대로를 답변으로 쓴다.
+    // 응답이 JSON 중간에 잘린 경우(예: {"translation": 처럼) 깨진 텍스트를 그대로 보여주지
+    // 않는다 — 안쪽에 따옴표로 시작된 텍스트가 있으면 그 내용만이라도 건지고, 그마저
+    // 없으면 재시도를 유도하는 안내문으로 대체한다.
+    const partialText = cleaned.match(/"reply"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/)?.[1];
+    if (partialText) return { text: partialText.replace(/\\"/g, '"'), correction: null };
+    if (/^\{/.test(cleaned)) {
+      return { text: "(응답이 중간에 끊겼어요. 한 번 더 말해볼래요?)", correction: null };
+    }
     return { text: cleaned, correction: null };
   }
 
