@@ -17,7 +17,7 @@ const STORAGE_KEYS = {
   apiKey: "eng_app_gemini_api_key",
 };
 
-const GEMINI_MODEL = "gemini-3.8-flash"; // 무료 등급에서 쓸 수 있는 빠른 모델
+const GEMINI_MODEL = "gemini-3.5-flash-lite"; // 무료 등급에서 쓸 수 있는 가볍고 빠른 모델
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 // 매 요청마다 전체 대화 기록을 다시 보내면 턴이 쌓일수록 토큰(=무료 한도) 소모가
