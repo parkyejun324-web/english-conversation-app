@@ -286,11 +286,17 @@ function addMessage(session, speaker, text) {
 // ---------------------------------------------------------------------------
 
 function getApiKey() {
-  return localStorage.getItem(STORAGE_KEYS.apiKey) || "";
+  try {
+    return localStorage.getItem(STORAGE_KEYS.apiKey) || "";
+  } catch (err) {
+    // 사파리 등에서 쿠키·웹사이트 데이터 차단 설정이 켜져 있으면 localStorage 접근 자체가 막힌다.
+    console.warn("[getApiKey] localStorage 접근 실패:", err);
+    return "";
+  }
 }
 
 function setApiKey(key) {
-  localStorage.setItem(STORAGE_KEYS.apiKey, key);
+  localStorage.setItem(STORAGE_KEYS.apiKey, key); // 실패하면 호출하는 쪽에서 잡는다
 }
 
 function setupApiKeyUI() {
@@ -305,11 +311,26 @@ function setupApiKeyUI() {
     status.textContent = "AI 응답을 받으려면 Gemini API 키를 입력하세요.";
   }
 
-  document.getElementById("btn-save-key").addEventListener("click", () => {
+  const trySave = (showEmptyMessage) => {
     const value = input.value.trim();
-    setApiKey(value);
-    status.textContent = value ? "저장되었습니다." : "API 키가 비어 있습니다.";
-  });
+    try {
+      setApiKey(value);
+      if (value) {
+        status.textContent = "저장되었습니다.";
+      } else if (showEmptyMessage) {
+        status.textContent = "API 키가 비어 있습니다.";
+      }
+    } catch (err) {
+      console.error("[setupApiKeyUI] 저장 실패:", err);
+      status.textContent =
+        "이 브라우저에서는 설정을 저장할 수 없어요. 프라이빗 모드이거나 설정에서 " +
+        "쿠키·웹사이트 데이터가 차단되어 있을 수 있어요.";
+    }
+  };
+
+  // 저장 버튼을 깜빡 안 눌러도 되도록, 입력창에서 포커스가 빠질 때도 자동 저장한다.
+  input.addEventListener("blur", () => trySave(false));
+  document.getElementById("btn-save-key").addEventListener("click", () => trySave(true));
 }
 
 let awaitingReply = false;
