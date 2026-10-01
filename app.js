@@ -20,6 +20,11 @@ const STORAGE_KEYS = {
 const GEMINI_MODEL = "gemini-3.8-flash"; // 무료 등급에서 쓸 수 있는 빠른 모델
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
+// 매 요청마다 전체 대화 기록을 다시 보내면 턴이 쌓일수록 토큰(=무료 한도) 소모가
+// 눈덩이처럼 불어난다. 최근 메시지만 잘라서 보낸다 — 홀수여야 자른 뒤에도 user 턴으로
+// 시작한다(기록은 항상 user, ai, user, ai... 순서이고 마지막은 방금 추가된 user 턴이라서).
+const MAX_HISTORY_MESSAGES = 9;
+
 // 시나리오는 코드로만 관리한다(사용자가 만들지 않음) — localStorage에 저장하지 않고
 // 항상 이 배열을 그대로 사용해서, 코드에서 시나리오를 추가/수정하면 바로 반영되게 한다.
 const DEFAULT_SCENARIOS = [
@@ -33,39 +38,6 @@ const DEFAULT_SCENARIOS = [
     startLine: "Hi! What would you like to talk about today?",
     systemPrompt:
       "You are a friendly English conversation partner. Reply only in English.",
-  },
-  {
-    id: "cafe-order",
-    category: "여행",
-    title: "카페 주문",
-    role: "카페 직원",
-    goal: "음료를 주문하고 결제까지 완료하기",
-    difficulty: "초급",
-    startLine: "Hi, welcome! What can I get for you today?",
-    systemPrompt:
-      "You are a barista at a coffee shop. Stay in character, reply only in English.",
-  },
-  {
-    id: "airport-checkin",
-    category: "여행",
-    title: "공항 체크인",
-    role: "항공사 체크인 카운터 직원",
-    goal: "항공권을 체크인하고 수하물을 부치기",
-    difficulty: "초급",
-    startLine: "Good morning! Can I see your passport and ticket, please?",
-    systemPrompt:
-      "You are an airline check-in counter staff member at an airport. Stay in character, reply only in English.",
-  },
-  {
-    id: "hotel-checkin",
-    category: "여행",
-    title: "호텔 체크인",
-    role: "호텔 프런트 직원",
-    goal: "예약을 확인하고 체크인을 완료하기",
-    difficulty: "중급",
-    startLine: "Welcome! Do you have a reservation with us?",
-    systemPrompt:
-      "You are a hotel front desk receptionist. Stay in character, reply only in English.",
   },
   {
     id: "job-interview",
@@ -386,7 +358,9 @@ async function requestAiReply(session) {
   try {
     // 시작 멘트(session.messages[0])는 스크립트로 넣은 것이므로 system 프롬프트에만
     // 알려주고, API에는 그 이후 사용자/AI 주고받은 턴부터 보낸다(항상 user로 시작).
-    const turns = session.messages.slice(1);
+    // 대화가 길어질수록 매번 전체 기록을 다시 보내면 토큰 사용량이 눈덩이처럼 불어나
+    // 무료 한도를 금방 써버리므로, 최근 몇 턴만 보낸다.
+    const turns = session.messages.slice(1).slice(-MAX_HISTORY_MESSAGES);
     const result = await callGemini(scenario, turns);
     setTyping(false);
     if (session.status !== "active") return; // 응답이 오기 전에 대화가 종료된 경우 버린다
@@ -407,8 +381,8 @@ async function requestAiReply(session) {
 
 // Gemini 무료 등급은 서버가 바쁠 때 503(일시 과부하)이나 429(요청 과다)를
 // 자주 반환한다. 둘 다 "내 요청이 잘못된 게 아니라 잠깐 다시 해보면 되는" 에러라
-// 짧게 텀을 두고 최대 2번까지 자동 재시도한다.
-async function callGeminiApi(body, retries = 2) {
+// 짧게 텀을 두고 재시도한다 — 단, 재시도도 무료 한도를 쓰는 요청이라 1번만 한다.
+async function callGeminiApi(body, retries = 1) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const res = await fetch(GEMINI_ENDPOINT, {
       method: "POST",
@@ -443,18 +417,14 @@ async function callGemini(scenario, turns) {
   // 자연어 지시문("라벨 쓰지 마라", "대화를 끝내지 마라")만으로는 모델이 자꾸 어겨서,
   // JSON으로 translation/correction/reply를 분리해 받아 포맷은 우리 코드가 직접 조립한다.
   // 대화 종료 후 한꺼번에 피드백을 만드는 대신, 매 턴마다 바로 짚어준다 — 더 빠르고 자연스럽다.
+  // (이 지시문은 매 요청마다 다시 보내는 입력 토큰이라, 짧게 유지해 무료 한도를 아낀다.)
   const hintNote =
-    'Reply with a JSON object with exactly four keys: "translation", "correction", "noteKo", and ' +
-    '"reply" (all strings). If the learner\'s most recent message was written in Korean, set ' +
-    '"translation" to the natural spoken English phrase for what they said — plain text, no quotes or ' +
-    'labels inside it — and leave "correction" as "". If their most recent message was already in ' +
-    'English, leave "translation" as "", and set "correction" to a corrected, more natural version ONLY ' +
-    'if there is a real grammar mistake or clearly unnatural phrasing (leave "correction" as "" if their ' +
-    'English was already fine — do not nitpick minor style). "noteKo" is ONE short sentence in Korean ' +
-    'explaining the key point, used only when "translation" or "correction" is non-empty, otherwise "". ' +
-    '"reply" must ALWAYS be a non-empty in-character line that reacts to what the learner said and moves ' +
-    'the conversation forward (a follow-up question or natural next beat) — never leave "reply" empty, ' +
-    'and never make it just a restatement of "translation" or "correction".';
+    'Reply as JSON: {translation, correction, noteKo, reply} (all strings). ' +
+    'Korean input -> fill "translation" with the natural English phrase (no quotes/labels), "correction" "". ' +
+    'English input with a real mistake -> fill "correction" with the natural fix, "translation" "". ' +
+    'English input already fine -> leave both "". ' +
+    '"noteKo": one short Korean sentence, only when translation/correction is set, else "". ' +
+    '"reply": ALWAYS a non-empty in-character line that reacts and moves the scene forward — never empty, never just restating translation/correction.';
   const systemPrompt =
     `${scenario.systemPrompt} Your opening line to the user was: "${scenario.startLine}". ` +
     `Continue the conversation naturally from there. Keep "reply" to at most ${settings.maxSentences} sentence(s). ` +
@@ -467,7 +437,7 @@ async function callGemini(scenario, turns) {
       role: m.speaker === "user" ? "user" : "model",
       parts: [{ text: m.text }],
     })),
-    generationConfig: { maxOutputTokens: 450, responseMimeType: "application/json" },
+    generationConfig: { maxOutputTokens: 300, responseMimeType: "application/json" },
   });
 
   const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
