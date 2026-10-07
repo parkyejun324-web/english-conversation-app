@@ -564,10 +564,13 @@ function startListening(RecognitionCtor) {
   recognition = new RecognitionCtor();
   recognition.lang = inputLang;
   recognition.continuous = false;
-  recognition.interimResults = false;
+  // 중간 결과도 받아둬야, 사용자가 버튼을 눌러 수동으로 끌 때(엔진이 스스로
+  // "끝났다"고 판단하기 전) onend에서라도 마지막으로 들은 내용을 쓸 수 있다.
+  recognition.interimResults = true;
   recognition.maxAlternatives = 1;
 
   const micBtn = document.getElementById("btn-mic");
+  let lastTranscript = ""; // 아직 onresult로 확정 처리하지 않은, 가장 최근에 들은 내용
 
   recognition.onstart = () => {
     isListening = true;
@@ -577,10 +580,16 @@ function startListening(RecognitionCtor) {
   };
 
   recognition.onresult = (event) => {
-    const transcript = event.results[0][0].transcript.trim();
-    if (!transcript) return;
-    const session = getCurrentSession();
-    if (session) handleUserTurn(session, transcript);
+    const result = event.results[event.results.length - 1];
+    lastTranscript = result[0].transcript.trim();
+
+    if (result.isFinal) {
+      if (lastTranscript) {
+        const session = getCurrentSession();
+        if (session) handleUserTurn(session, lastTranscript);
+      }
+      lastTranscript = ""; // 이미 처리했으니 onend에서 같은 내용을 또 보내지 않게 비운다
+    }
   };
 
   recognition.onerror = (event) => {
@@ -597,6 +606,14 @@ function startListening(RecognitionCtor) {
     isListening = false;
     micBtn.classList.remove("listening");
     micBtn.textContent = "🎤 말하기";
+
+    // 엔진이 최종 결과를 확정하기 전에 수동으로 멈춘 경우, 마지막으로 들은
+    // 중간 결과라도 대화에 반영한다 — 그래야 "꺼도 아무 기록이 안 남는" 일이 없다.
+    if (lastTranscript) {
+      const session = getCurrentSession();
+      if (session) handleUserTurn(session, lastTranscript);
+      lastTranscript = "";
+    }
   };
 
   recognition.start();
