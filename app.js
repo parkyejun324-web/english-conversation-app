@@ -36,6 +36,7 @@ const DEFAULT_SCENARIOS = [
     goal: "주제 제한 없이 자유롭게 영어로 대화하기",
     difficulty: "중급",
     startLine: "Hi! What would you like to talk about today?",
+    startLineKo: "안녕하세요! 오늘은 무슨 이야기를 하고 싶으세요?",
     systemPrompt:
       "You are a friendly English conversation partner. Reply only in English.",
   },
@@ -47,6 +48,7 @@ const DEFAULT_SCENARIOS = [
     goal: "자기소개와 지원 동기를 영어로 설명하기",
     difficulty: "고급",
     startLine: "Thanks for coming in today. Could you start by introducing yourself?",
+    startLineKo: "오늘 와주셔서 감사합니다. 먼저 자기소개를 해주시겠어요?",
     systemPrompt:
       "You are a job interviewer. Stay in character, reply only in English.",
   },
@@ -58,6 +60,7 @@ const DEFAULT_SCENARIOS = [
     goal: "프로젝트 진행 상황을 설명하고 다음 일정을 조율하기",
     difficulty: "고급",
     startLine: "Thanks for joining. Could you give us a quick update on where the project stands?",
+    startLineKo: "참석해 주셔서 감사합니다. 프로젝트 진행 상황을 간단히 알려주시겠어요?",
     systemPrompt:
       "You are a colleague in a professional business meeting. Use a polite, professional tone. Stay in character, reply only in English.",
   },
@@ -69,6 +72,7 @@ const DEFAULT_SCENARIOS = [
     goal: "날씨, 주말 계획 등 가벼운 주제로 자연스럽게 대화 나누기",
     difficulty: "중급",
     startLine: "Hey, how was your weekend?",
+    startLineKo: "안녕하세요, 주말 잘 보내셨어요?",
     systemPrompt:
       "You are a friendly acquaintance making casual small talk. Keep it light and casual. Stay in character, reply only in English.",
   },
@@ -224,7 +228,7 @@ function startSession(scenarioId) {
   saveState();
 
   openConversationScreen(session);
-  addMessage(session, "ai", scenario.startLine);
+  addMessage(session, "ai", scenario.startLine, scenario.startLineKo);
 }
 
 function openConversationScreen(session) {
@@ -266,13 +270,20 @@ function renderChat(session) {
     }
 
     log.appendChild(bubble);
+
+    if (msg.speaker === "ai" && msg.textKo) {
+      const koLine = document.createElement("div");
+      koLine.className = "bubble-translation";
+      koLine.textContent = msg.textKo;
+      log.appendChild(koLine);
+    }
   });
 
   log.scrollTop = log.scrollHeight;
 }
 
-function addMessage(session, speaker, text) {
-  session.messages.push({ speaker, text, timestamp: new Date().toISOString() });
+function addMessage(session, speaker, text, textKo) {
+  session.messages.push({ speaker, text, textKo: textKo || "", timestamp: new Date().toISOString() });
   saveState();
   renderChat(session);
   if (speaker === "ai") {
@@ -385,7 +396,7 @@ async function requestAiReply(session) {
     const result = await callGemini(scenario, turns);
     setTyping(false);
     if (session.status !== "active") return; // 응답이 오기 전에 대화가 종료된 경우 버린다
-    addMessage(session, "ai", result.text);
+    addMessage(session, "ai", result.text, result.replyKo);
     if (result.correction) {
       session.corrections = session.corrections || [];
       session.corrections.push(result.correction);
@@ -440,12 +451,13 @@ async function callGemini(scenario, turns) {
   // 대화 종료 후 한꺼번에 피드백을 만드는 대신, 매 턴마다 바로 짚어준다 — 더 빠르고 자연스럽다.
   // (이 지시문은 매 요청마다 다시 보내는 입력 토큰이라, 짧게 유지해 무료 한도를 아낀다.)
   const hintNote =
-    'Reply as JSON: {translation, correction, noteKo, reply} (all strings). ' +
+    'Reply as JSON: {translation, correction, noteKo, reply, replyKo} (all strings). ' +
     'Korean input -> fill "translation" with the natural English phrase (no quotes/labels), "correction" "". ' +
     'English input with a real mistake -> fill "correction" with the natural fix, "translation" "". ' +
     'English input already fine -> leave both "". ' +
     '"noteKo": one short Korean sentence, only when translation/correction is set, else "". ' +
-    '"reply": ALWAYS a non-empty in-character line that reacts and moves the scene forward — never empty, never just restating translation/correction.';
+    '"reply": ALWAYS a non-empty in-character line that reacts and moves the scene forward — never empty, never just restating translation/correction. ' +
+    '"replyKo": ALWAYS a natural Korean translation of "reply" (never empty).';
   const systemPrompt =
     `${scenario.systemPrompt} Your opening line to the user was: "${scenario.startLine}". ` +
     `Continue the conversation naturally from there. Keep "reply" to at most ${settings.maxSentences} sentence(s). ` +
@@ -476,11 +488,11 @@ async function callGemini(scenario, turns) {
     // 않는다 — 안쪽에 따옴표로 시작된 텍스트가 있으면 그 내용만이라도 건지고, 그마저
     // 없으면 재시도를 유도하는 안내문으로 대체한다.
     const partialText = cleaned.match(/"reply"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/)?.[1];
-    if (partialText) return { text: partialText.replace(/\\"/g, '"'), correction: null };
+    if (partialText) return { text: partialText.replace(/\\"/g, '"'), correction: null, replyKo: "" };
     if (/^\{/.test(cleaned)) {
-      return { text: "(응답이 중간에 끊겼어요. 한 번 더 말해볼래요?)", correction: null };
+      return { text: "(응답이 중간에 끊겼어요. 한 번 더 말해볼래요?)", correction: null, replyKo: "" };
     }
-    return { text: cleaned, correction: null };
+    return { text: cleaned, correction: null, replyKo: "" };
   }
 
   const reply = (parsed.reply || "").trim();
@@ -489,18 +501,20 @@ async function callGemini(scenario, turns) {
   const translation = (parsed.translation || "").trim();
   const correction = (parsed.correction || "").trim();
   const noteKo = (parsed.noteKo || "").trim();
+  const replyKo = (parsed.replyKo || "").trim();
   const lastUserText = turns[turns.length - 1]?.text || "";
 
   if (translation) {
-    return { text: `"${translation}"\n\n${reply}`, correction: null };
+    return { text: `"${translation}"\n\n${reply}`, correction: null, replyKo };
   }
   if (correction) {
     return {
       text: `"${correction}"\n\n${reply}`,
       correction: { original: lastUserText, suggestion: correction, noteKo },
+      replyKo,
     };
   }
-  return { text: reply, correction: null };
+  return { text: reply, correction: null, replyKo };
 }
 
 // ---------------------------------------------------------------------------
