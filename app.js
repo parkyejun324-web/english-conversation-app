@@ -521,13 +521,65 @@ async function callGemini(scenario, turns) {
 // 음성 출력 (TTS) — AI 응답은 항상 영어이므로 lang을 en-US로 고정한다
 // ---------------------------------------------------------------------------
 
+// 안드로이드(갤럭시 등) Chrome은 iOS Safari보다 TTS가 까다롭다:
+//  1) 음성 목록(getVoices)이 늦게 로드되고, voice를 직접 지정하지 않으면 기본 엔진
+//     (삼성 TTS 등)의 한국어 음성으로 가거나 아무 소리도 안 나는 경우가 있다.
+//  2) cancel() 직후 바로 speak()하면 새 발화가 조용히 무시되는 버그가 있다.
+//  3) 사용자 터치 안에서 한 번도 speak()를 호출하지 않으면, 이후 비동기 응답에서
+//     호출한 speak()가 막히기도 한다 → 첫 터치 때 무음 발화로 "잠금 해제"해 둔다.
+let englishVoice = null;
+let ttsUnlocked = false;
+
+function pickEnglishVoice() {
+  if (!("speechSynthesis" in window)) return;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return;
+  const norm = (v) => (v.lang || "").replace("_", "-").toLowerCase();
+  englishVoice =
+    voices.find((v) => norm(v) === "en-us" && v.localService) ||
+    voices.find((v) => norm(v) === "en-us") ||
+    voices.find((v) => norm(v).startsWith("en")) ||
+    null;
+}
+
+function setupSpeechOutput() {
+  if (!("speechSynthesis" in window)) return;
+  pickEnglishVoice();
+  window.speechSynthesis.addEventListener?.("voiceschanged", pickEnglishVoice);
+
+  const unlock = () => {
+    if (ttsUnlocked) return;
+    ttsUnlocked = true;
+    const silent = new SpeechSynthesisUtterance(" ");
+    silent.volume = 0;
+    window.speechSynthesis.speak(silent);
+  };
+  document.addEventListener("pointerdown", unlock, { once: true, capture: true });
+  document.addEventListener("keydown", unlock, { once: true, capture: true });
+}
+
 function speakText(text, rate = 1) {
   if (!("speechSynthesis" in window)) return;
-  window.speechSynthesis.cancel(); // 이전에 재생 중이던 발화가 있으면 정리
+  const synth = window.speechSynthesis;
+  if (!englishVoice) pickEnglishVoice();
+
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "en-US";
   utterance.rate = rate;
-  window.speechSynthesis.speak(utterance);
+  if (englishVoice) utterance.voice = englishVoice;
+  utterance.onerror = (e) => {
+    if (e.error === "interrupted" || e.error === "canceled") return; // 새 발화로 끊은 정상 상황
+    setMicStatus(
+      `음성 재생 오류(${e.error}). 휴대폰 미디어 볼륨과 설정 > 텍스트 음성 변환(TTS)에서 영어 음성이 설치돼 있는지 확인해주세요.`
+    );
+  };
+
+  const busy = synth.speaking || synth.pending;
+  if (busy) synth.cancel(); // 이전에 재생 중이던 발화가 있으면 정리
+  synth.resume(); // 안드로이드에서 가끔 '일시정지' 상태로 멈춰 있는 경우를 푼다
+  // cancel 직후 바로 speak하면 안드로이드에서 무시될 수 있어 살짝 늦춘다.
+  if (busy) setTimeout(() => synth.speak(utterance), 150);
+  else synth.speak(utterance);
 }
 
 // ---------------------------------------------------------------------------
@@ -716,6 +768,7 @@ function restart() {
 function init() {
   renderScenarios();
   setupSpeechInput();
+  setupSpeechOutput();
   setupApiKeyUI();
 
   const current = getCurrentSession();
